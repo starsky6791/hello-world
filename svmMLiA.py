@@ -86,6 +86,14 @@ def smoSimple(dataMatIn,classLabels,C,toler,maxIter):
         print('iteration number:%d'%(iterCount))   
     return alpha,b
 
+
+
+
+#==============================================================================
+   
+    #以下为完整版SMO算法
+
+#==============================================================================
 #用于储存所有数据，包括惩罚因子、误差、输入样本、输入样本的标签及需要最优化的参数α、b
 class optStruct:
     def __init__(self,dataMat,labelMat,C,toler):
@@ -93,15 +101,14 @@ class optStruct:
         self.labelMat=labelMat
         self.C=C
         self.toler=toler
-        self.m=dataMat.shape()        
-        self.alphas=np.mat(np.zeros(self.m,1))
+        self.m=dataMat.shape[0]        
+        self.alphas=np.mat(np.zeros([self.m,1]))
         self.b=0
-        self.ELabel=np.mat(np.zeros(self.m,2))#第一列用于表示是否有效的标志，第二列给出E的值
-
+        self.ELabel=np.mat(np.zeros([self.m,2]))#第一列用于表示是否有效的标志，第二列给出E的值
 
 #用于计算E
 def calEK(oS,k):
-    E=float(np.multiply(oS.alphas*oS.labelMat).T*(oS.dataMat*oS.dataMat[k,:].T)+oS.b)\
+    E=float(np.multiply(oS.alphas,oS.labelMat).T*(oS.dataMat*oS.dataMat[k,:].T)+oS.b)\
             -float(oS.labelMat[k])
     return E
 
@@ -114,21 +121,24 @@ def selectJ(i,oS,EI):
         if j!=i:
             EJ= calEK(oS,j)
             if abs(EJ-EI)>maxdeltaE:
-                maxdeltaE=calEK(oS,j)-EI
+                maxdeltaE=abs(EJ-EI)
                 maxJ=j
     return maxJ,EJ
 
-
+#用于更新E值
 def updataE(oS,k):
     E=calEK(oS,k)
-    return E
+    oS.eCache[k]=[1,E]
 
+
+#选择内部循环的节点，并进行α值的更新，返回值为1时说明进行了更新，否则返回0
 def innerL(i,oS):
     #计算外层
     EI=calEK(oS,i)
-    #不满足KKT条件是选择α
+    #不满足KKT条件时选择α
     if((oS.alphas[i]>0)and(oS.labelMat[i]*EI>oS.toler))or\
         ((oS.alphas[i]<oS.C)and(oS.labelMat[i]*EI<-oS.toler)):
+                      
             j,EJ=selectJ(i,oS,EI)
             alphaIOld=oS.alphas[i].copy()
             alphaJOld=oS.alphas[j].copy()
@@ -144,14 +154,65 @@ def innerL(i,oS):
                 return 0
             eta=float((oS.dataMat[i,:]-oS.dataMat[j,:])*(oS.dataMat[i,:]-\
                           oS.dataMat[j,:]).T)
-            
+            if eta<=0:print("eta<=0");return 0
+            oS.alphas[j]+=oS.labelMat[j]*(EI-EJ)/eta
+            oS.alphas[j]=clipAlpha(oS.alphas[j],H,L)
+            #updataE(oS,j)
+            #计算新的b值
+            bInew=float(-EI-oS.labelMat[i]*float(oS.dataMat[i,:]*oS.dataMat[i,:].T)*\
+                            (oS.alphas[i]-alphaIOld)-oS.labelMat[j]*float(oS.dataMat[i\
+                            ,:]*oS.dataMat[j,:].T)*(oS.alphas[j]-alphaJOld)+oS.b)
+            bJnew=float(-EJ-oS.labelMat[i]*float(oS.dataMat[i,:]*oS.dataMat[j,:].T)*\
+                            (oS.alphas[i]-alphaIOld)-oS.labelMat[j]*float(oS.dataMat[j\
+                            ,:]*oS.dataMat[j,:].T)*(oS.alphas[j]-alphaJOld)+oS.b)
+            #根据α的结果选择b值
+            if (oS.alphas[i]>0)and(oS.alphas[i]<oS.C):  oS.b=bInew
+            elif(oS.alphas[j]>0)and(oS.alphas[j]<oS.C): oS.b=bJnew
+            else:oS.b=(bInew+bJnew)/2.0   
+            return 1
+    else: return 0
+
+#SMO算法外部循环，用于选择外部循环的序号
+def smoP(dataMatIn,classLabels,C,toler,maxIter,kTup=('lin',0)):
+    #将数据生成oS对象
+    oS=optStruct(np.mat(dataMatIn),np.mat(classLabels).T,C,toler)
+    iterCount=0
+    #遍历整个α的标签，True时遍历整个α
+    entireSet=True
+    alphaPairsChanged=0
+    #迭代条件：为迭代次数小于最大迭代次数且每次迭代后进行过α值修正
+    #由于初始时将所有α均设置为0，因此一开始是遍历整个α集合，而不是从边界上进行遍历
+    while(iterCount<=maxIter)and((alphaPairsChanged==0)or(entireSet)):
+        #迭代前将α的修正次数置为0
+        alphaPairsChanged=0
+        if (entireSet):#遍历整个集合
+            for i in range(oS.m):
+                alphaPairsChanged+=innerL(i,oS )
+                
+                print('遍历了整个集合，迭代次数为：%d ,修改了第 %d 个α值，修改了 %d 次'%(iterCount,i,alphaPairsChanged))
+            iterCount+=1 #遍历一次集合迭代次数加1
+        else:
+            nonBoundSet=np.nonzero((oS.alphas.A>0)*(oS.alphas.A<C))[0]
+            for i in nonBoundSet:
+                alphaPairsChanged+=innerL(i,oS)
+               
+                print('遍历了内部点，迭代次数为：%d i,修改了第 %d 个α值，修改了 %d 次'%(iterCount,i,alphaPairsChanged))
+            iterCount+=1 #遍历一次内部点迭代次数加1
+        #由于α初始值为0，所以初始时必定是遍历整个集合
+        if entireSet:entireSet=False  #遍历完整个集合后，开始遍历内部点。
+        #当entireSet为假时遍历内部点，如果所有内部点都没有进行值更新，则重新遍历整个集合
+        elif(alphaPairsChanged==0):entireSet=True
+        print('迭代次数为：%d'% iterCount)
+    return oS.b,oS.alphas
 
 
-
-
-
-
+def calcW(alphas,data,labelDat):
+    alphasMat=np.mat(alphas)
+    dataMat=np.mat(data)
+    labelMat=np.mat(labelDat)
+    w=np.multiply(alphasMat,labelMat.T).T*dataMat   
+    return w
 
 #用于调试代码
 #dataMat,labelMat=loadData('testSet.txt')
-#alphas,b=smoSimple(dataMat,labelMat,0.6,0.001,40)
+#alphas,b=smoP(dataMat,labelMat,0.6,0.001,40)
